@@ -1,0 +1,309 @@
+---
+title: "R workbook for Geospatial Health Data by Paula Moraga"
+author: "Mathupanee Oonsivilai"
+date: "2024-05-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+This notebook is not meant to be knitted. It was meant as a code tutorial for the DriaDD group bookclub for Geospatial Health Data by Paula Moraga (2019) which can be found at https://www.paulamoraga.com/book-geospatial/. 
+
+This notebook adds: a reference to the R Docker container which will run code out-of-the-box, renv version lock on packages, installation guidepost for missing packages, some contextual notes and links.
+
+## Environment setup via renv
+
+rgdal last frozen at 2023-06-01.
+Latest relevant docker image before that freeze date is rocker/geospatial:4.3.1.
+Thus this notebook is developed on rocker/geospatial:4.3.1 (731d51d434739f72f930acad26456a20ef42cd1209dc53a21aae7138bd36ee2a)
+
+Just install the packages, then check renv version lock only if that fails.
+
+Check status of renv. 
+```{r check status}
+# It acts a bit wonky with rocker, but it's just good to have package version listing.
+#renv::init()
+#file.remove(".Rprofile")
+#unlink("renv", recursive=TRUE)
+```
+
+Need to install these packages on container creation.
+```{r install missing packages, message=FALSE}
+install.packages("cholera")
+devtools::install_version("rgdal", version = "1.6-7", repos = "http://cran.us.r-project.org")
+install.packages("leaflet")
+install.packages("webshot")
+install.packages("mapview")
+install.packages("leaflet.extras2")
+```
+
+```{r load useful libraries, message=FALSE}
+library(tidyverse)
+```
+
+## Chapter 2: Spatial data and R packages for mapping
+
+### Example Geodata Types
+```{r Areal Data-SIDS North Carolina, echo=FALSE}
+library(sf)
+library(ggplot2)
+library(viridis)
+nc <- st_read(system.file("shape/nc.shp", package = "sf"), quiet=TRUE)
+test_nc <- nc %>% dplyr::select(SID74)#, geometry) # Only need these 2 columns to function
+ggplot(data = test_nc, aes(fill = SID74)) + geom_sf() +
+  scale_fill_viridis() + theme_bw()
+```
+
+```{r Geostat Data-Rainfall Parana Brazil, echo=FALSE}
+library(geoR)
+pb <- data.frame(cbind(parana$coords, Rainfall = parana$data))
+pb_border <- data.frame(parana$border)
+ggplot(pb) + geom_point(aes(east, north, color=Rainfall), size=2) +
+  coord_fixed(ratio = 1) +
+  scale_color_gradient(low = "blue", high="orange") +
+  geom_path(data = pb_border, aes(east, north)) +
+  theme_bw()
+```
+
+```{r Point Pattern Data-Cholera}
+library(cholera)
+rng <- mapRange() #specific function to return xlim and ylim of Snow's map
+snow <- fatalities
+plot(fatalities[, c("x", "y")],
+     pch = 15, col = "black",
+     cex = 0.5, xlim = rng$x, ylim = rng$y, asp=1,
+     frame.plot = FALSE, axes = FALSE, xlab = "", ylab = ""
+     )
+addRoads() #specific function to add roads to plot
+```
+
+```{r Show structure of different types of data}
+str(nc)
+str(pb)
+str(snow)
+```
+
+### Coordinate Reference Systems (CRS)
+
+prog4 strings maybe outdated. https://inbo.github.io/tutorials/tutorials/spatial_crs_coding/
+```{r example PROJ4 strings}
+# WGS84
+"+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+# UTM zone 29
+"+proj=utm +zone=29 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
+# UTM zone 29 south
+"+proj=utm +zone=29 +ellps=WGS84 +datum=WGS84 +units=m +no_defs +south"
+```
+
+rdgal package has been retired https://r-spatial.org/r/2022/04/12/evolution.html
+
+```{r show all available CRS in R}
+View(rgdal::make_EPSG())
+```
+
+```{r example conversion between projections}
+library(rgdal)
+
+# create data with coordinates given by longitude and latitude
+d <- data.frame(long = rnorm(100, 0, 1), lat = rnorm(100, 0, 1))
+coordinates(d) <- c("long", "lat")
+
+# assign CRS WGS84 longitude/latitude
+proj4string(d) <- CRS("+proj=longlat +ellps=WGS84
+                      +datum=WGS84 +no_defs")
+
+# reproject data from longitude/latitude to UTM zone 35 south
+d_new <- spTransform(d, CRS("+proj=utm +zone=35 +ellps=WGS84
+                      +datum=WGS84 +units=m +no_defs +south"))
+
+# add columns UTMx and UTMy
+d_new$UTMx <- coordinates(d_new)[, 1]
+d_new$UTMy <- coordinates(d_new)[, 2]
+```
+
+### Shapefiles
+
+```{r read in files with readOGR example}
+# name of the shapefile of North Carolina of the sf package
+nameshp <- system.file("shape/nc.shp", package = "sf")
+# read shapefile with readOGR()
+library(rgdal)
+map <- readOGR(nameshp, verbose = FALSE)
+
+class(map)
+```
+
+```{r readOGR cont. 1}
+head(map@data)
+```
+
+```{r readOGR cont. 2}
+plot(map)
+```
+
+```{r Read in with st_read() example}
+# read shapefile with st_read()
+library(sf)
+map <- st_read(nameshp, quiet = TRUE)
+
+class(map)
+```
+
+
+```{r st_read cont. 1}
+head(map)
+```
+
+```{r st_read cont. 2}
+plot(map)
+```
+
+### Making maps with R
+
+```{r ggplot2 via geom_sf example}
+library(sf)
+library(ggplot2)
+nameshp <- system.file("shape/nc.shp", package = "sf")
+map <- st_read(nameshp, quiet = TRUE)
+ggplot(map) + geom_sf(aes(fill = SID74)) + theme_bw()
+```
+
+```{r ggplot2 change color example}
+library(viridis)
+map <- st_as_sf(map)
+ggplot(map) + geom_sf(aes(fill = SID74)) +
+  scale_fill_viridis() + theme_bw()
+```
+```{r ggplot2 save plot example}
+png("plot.png")
+ggplot(map) + geom_sf(aes(fill = SID74)) +
+  scale_fill_viridis() + theme_bw()
+dev.off()
+```
+
+```{r transform EPSG4267 to EPSG4326 as required by leaflet}
+st_crs(map) # Originally NAD27, need WGS84
+map <- st_transform(map, 4326)
+```
+
+```{r leaflet example}
+library(leaflet)
+
+pal <- colorNumeric("YlOrRd", domain = map$SID74)
+
+leaflet(map) %>%
+  addTiles() %>%
+  addPolygons(
+    color = "white", fillColor = ~ pal(SID74),
+    fillOpacity = 0.5
+  ) %>%
+  addLegend(pal = pal, values = ~SID74, opacity = 1)
+```
+
+```{r leaflet saveWidget example}
+library(htmlwidgets)
+p<- leaflet(map) %>%
+  addTiles() %>%
+  addPolygons(
+    color = "white", fillColor = ~ pal(SID74),
+    fillOpacity = 1
+  ) %>%
+  addLegend(pal = pal, values = ~SID74, opacity = 1)
+saveWidget(p, "examplewidget.html")
+```
+
+```{r webshot example (not working)}
+# Some sort of issue with OpenSSL version and whatnot. https://stackoverflow.com/questions/73004195/phantomjs-wont-install-autoconfiguration-error
+library(webshot)
+webshot("http://www.google.com")
+```
+
+```{r mapview example}
+library(mapview)
+mapview(map, zcol = "SID74")
+```
+
+```{r mapview customize background map example}
+library(RColorBrewer)
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+mapview(map,
+  zcol = "SID74",
+  map.types = "CartoDB.DarkMatter",
+  col.regions = pal
+)
+```
+
+
+```{r leafsync sync multiple maps}
+library(leafsync)
+m74 <- mapview(map, zcol = "SID74")
+m79 <- mapview(map, zcol = "SID79")
+m <- leafsync::sync(m74, m79)
+m
+```
+
+Original code did not sync legends, but found example code that did in Moraga's other book Spatial Statistics for Data Science (2023).
+```{r leafsync sync multiple maps improved}
+library(leafsync)
+pal <- colorRampPalette(brewer.pal(9, "YlOrRd"))
+at <- seq(min(c(map$SID74, map$SID79)), max(c(map$SID74, map$SID79)),
+          length.out = 8)
+map_type <- "CartoDB.Positron"
+m74 <- mapview(map, zcol = "SID74", map.types = map_type, col.regions = pal, at = at)
+m79 <- mapview(map, zcol = "SID79", map.types = map_type, col.regions = pal, at = at)
+m <- leafsync::sync(m74, m79)
+m
+```
+```{r leafsync sync multiple maps slider via leaflet.extras2}
+library(leaflet.extras2)
+m74 | m79
+```
+
+
+
+```{r tmap example}
+library(tmap)
+tmap_mode("view") #interactive
+#tmap_mode("plot") #static
+tm_shape(map) + tm_polygons("SID74")
+```
+
+### Update from PROJ4 string to WKT2 strings  with sf
+
+Running examples from link in note about outdated PROJ4 strings.
+```{r load in example data from rgdal}
+library(sp)
+library(raster)
+library(sf)
+
+cities <- 
+  st_read(system.file("vectors/cities.shp", package = "rgdal"))
+
+```
+
+```{r strip to bare XY coords and manually get WKT2 for WGS82}
+# Convert to plain data frame with XY coordinates to add CRS ourselves
+cities <- 
+  cbind(st_drop_geometry(cities), 
+        st_coordinates(cities))
+head(cities, 10) # top 10 rows
+
+# Get WKT2 string representing WGS84
+crs_wgs84 <- st_crs(4326) # WGS 84 has EPSG code 4326
+```
+
+```{r convert data to sf object}
+# Convert to sf object
+cities2 <- st_as_sf(cities, coords = c("X", "Y"))
+st_crs(cities2)
+```
+
+```{r add CRS to data}
+# Add CRS 
+st_crs(cities2) <- 4326
+st_crs(cities2)
+```
+
+sp package has been outgrown by sf package.
+raster package is superseded by terra package.
+Link goes through examples of how to do conversion in sp and raster.
