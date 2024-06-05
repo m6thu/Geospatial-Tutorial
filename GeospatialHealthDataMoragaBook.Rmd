@@ -175,7 +175,7 @@ ggplot(map) + geom_sf(aes(fill = SID74)) +
   scale_fill_viridis() + theme_bw()
 ```
 ```{r ggplot2 save plot example}
-png("plot.png")
+png("output/plot.png")
 ggplot(map) + geom_sf(aes(fill = SID74)) +
   scale_fill_viridis() + theme_bw()
 dev.off()
@@ -209,7 +209,7 @@ p<- leaflet(map) %>%
     fillOpacity = 1
   ) %>%
   addLegend(pal = pal, values = ~SID74, opacity = 1)
-saveWidget(p, "examplewidget.html")
+saveWidget(p, "output/examplewidget.html")
 ```
 
 ```{r webshot example (not working)}
@@ -307,3 +307,163 @@ st_crs(cities2)
 sp package has been outgrown by sf package.
 raster package is superseded by terra package.
 Link goes through examples of how to do conversion in sp and raster.
+
+
+## Chapter 4: R-INLA package
+
+### Package installation
+
+https://www.r-inla.org/download-install
+From version 23.05.30, INLA is built for R-4.3
+From version 24.05.10, INLA is built for R-4.4
+Trial and error search for matching version somewhere between those dates...
+INLA_24.02.09 built for R-4.3.2
+INLA_23.09.09 built for R-4.3.1
+```{r install R-INLA}
+install.packages("fmesher")
+# graph and Rgraphviz seems to not be actually used by INLA so far...
+#devtools::install_version("graph", version = "1.30.0", repos = "http://cran.us.r-project.org")
+#devtools::install_version("Rgraphviz", version = "1.18.1", repos = "http://cran.us.r-project.org")
+remotes::install_version(
+  "INLA", 
+  version="23.09.09",
+  repos=c(getOption("repos"), INLA="http://inla.r-inla-download.org/R/stable"),
+  dependencies=TRUE
+)
+```
+
+### INLA formatting
+
+```{r linear formulas}
+y ~ x1 + x2 + f(i, model = "iid")
+# explicitly including beta_0
+y ~ 0 + b0 + x1 + x2 + f(i, model = "iid")
+```
+```{r see available priors}
+names(inla.models()$prior) #list priornames
+inla.models()$prior #
+inla.doc("gaussian") #get documentation of priorname gaussian
+```
+
+```{r show intercepts of guassian prior}
+# Show intercepts
+inla.set.control.fixed.default()[c("mean.intercept", "prec.intercept", "mean", "prec")]
+```
+
+```{r setting intercepts and priors, eval=FALSE}
+# if eval = FALSE, chunk is for reference not running
+# Set intercept mean and prec, and mean and prec for everything else
+prior.fixed <- list(mean.intercept = <>, prec.intercept = <>,
+                    mean = <>, prec = <>)
+
+# How it's fed into INLA
+res <- inla(formula,
+  data = d,
+  control.fixed = prior.fixed
+)
+```
+
+```{r setting hyper parameter priors, eval=FALSE}
+# hyperparameters theta assigned as `hyper =`
+formula <- y ~ 1 + f(<>, model = <>, hyper = prior.f)
+```
+
+```{r setting prior of parameters, eval=FALSE}
+# prior of parameters of likelihood assigned in `control.family`
+res <- inla(formula,
+  data = d,
+  control.fixed = prior.fixed,
+  control.family = list(..., hyper = prior.l)
+)
+```
+
+The documentation for `control.family` deems `initial` `prior` `param` `fixed` as obsolete. Info from `?inla.models` says that `hyper` format take compatible to mix with old style, but "takes over the old style".
+
+
+### INLA example
+
+```{r Surg data}
+Surg
+# n = number of operations in one-year period
+# r = deaths within 30 days of surgery
+# hospital = hospital name
+```
+
+```{r show relevant INLA docs, eval=FALSE}
+# Can be wonky with errors on call if pop-ups are blocked on browser
+inla.doc("pc.prec") #Show info on Penalized Complexity prior for precision
+inla.doc("iid") #Show info on Independent random noise model
+```
+
+```{r INLA example on Surg}
+library(INLA)
+prior.prec <- list(prec = list(prior = "pc.prec",
+                               param = c(1, 0.01)))
+
+formula <- r ~ f(hospital, model = "iid", hyper = prior.prec)
+
+res <- inla(formula,
+  data = Surg,
+  family = "binomial", Ntrials = n,
+  control.predictor = list(compute = TRUE),
+  control.compute = list(dic = TRUE, return.marginals.predictor = TRUE)
+)
+```
+
+```{r INLA results}
+summary(res)
+```
+
+```{r plot results}
+plot(res)
+```
+```{r}
+res$dic$dic
+res$summary.fixed
+res$summary.random
+res$summary.hyperpar
+```
+
+```{r}
+res$summary.fitted.values
+```
+
+```{r Surg plot post marginal of fixed effects}
+library(ggplot2)
+alpha <- res$marginals.fixed[[1]]
+ggplot(data.frame(inla.smarginal(alpha)), aes(x, y)) +
+  geom_line() +
+  theme_bw()
+```
+
+
+```{r Surg quantiles}
+quant <- inla.qmarginal(0.05, alpha)
+quant
+
+inla.pmarginal(quant, alpha)
+```
+
+
+```{r Surg quantiles plot}
+ggplot(data.frame(inla.smarginal(alpha)), aes(x, y)) +
+  geom_line() +
+  geom_area(data = subset(data.frame(inla.smarginal(alpha)),
+                                     x < quant),
+            fill = "black") +
+  theme_bw()
+```
+
+
+```{r Surg variance of u_i}
+marg.variance <- inla.tmarginal(function(x) 1/x,
+res$marginals.hyperpar$"Precision for hospital")
+```
+
+
+```{r Surg variance of u_i plot}
+ggplot(data.frame(inla.smarginal(marg.variance)), aes(x, y)) +
+  geom_line() +
+  theme_bw()
+```
+
